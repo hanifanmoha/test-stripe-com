@@ -1,0 +1,14 @@
+In this project, i want to explore stripe.com integration
+Thats why i use next js to simulate FE, BE, and stripe.com integration
+
+My goal is to know subscription process in stripe.com
+
+Afaik before create subscription, i need to create customer, product, and price first
+
+I dont want to use DB in this project, so i will use stripe.com api directly
+The api will be proxied by next js api to mask the secret key
+
+For now, please make me a CRUD customer, product, price via next js proxy, call stripe.com api
+This app will be like a CRM, but make it simple. i dont need complex feature like search, or etc
+Only sidebar with simple menus.
+The main page will containing table, and can be redirected to show / edit page
