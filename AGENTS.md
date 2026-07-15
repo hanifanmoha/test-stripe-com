@@ -16,6 +16,8 @@ The domain chain being explored: a **customer** is who gets billed, a **product*
 
 Subscriptions are created via **Stripe-hosted Checkout** (`/api/checkout` → redirect to `checkout.stripe.com`). Deliberately *not* via Stripe Elements: hosted Checkout needs no client-side Stripe SDK and no publishable key, so the whole app keeps talking to Stripe through the server proxy. Card data goes browser → Stripe directly and never reaches this server, which keeps it out of PCI scope.
 
+**[CHECKOUT.md](CHECKOUT.md) compares all the payment flows and documents why this one was chosen.** Read it before proposing a switch to Elements or embedded checkout — the tradeoff is already written down.
+
 ## Setup
 
 Requires a Stripe **test** key: copy `.env.local.example` to `.env.local` and set `STRIPE_SECRET_KEY=sk_test_...`. Without it, every `/api` call fails with a setup message. The app performs real writes — including deletes — against whatever account the key belongs to, so never point it at a live key.

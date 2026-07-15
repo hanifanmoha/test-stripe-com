@@ -32,6 +32,8 @@ To change what something costs, you **archive the old price and create a new one
 
 ## Subscribing (Stripe-hosted Checkout)
 
+> Stripe offers several ways to take payment. [CHECKOUT.md](CHECKOUT.md) compares them and explains why this project uses the hosted one.
+
 **Subscriptions → New subscription** → pick a customer and a recurring price → you're sent to Stripe's own checkout page. Pay with test card `4242 4242 4242 4242`, any future expiry, any CVC. Stripe then redirects you back.
 
 Other [test cards](https://docs.stripe.com/testing?testing-method=card-numbers#cards) are worth a look once the happy path works — there are numbers that decline, that force a 3D Secure challenge, and that succeed initially but fail on renewal. That last group is the only way to see `past_due` and `unpaid` without waiting for a real failure.
