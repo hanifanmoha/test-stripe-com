@@ -1,24 +1,23 @@
-import Stripe from "stripe";
-
 /**
- * Server-only Stripe client. Never import this from a Client Component —
- * doing so would bundle STRIPE_SECRET_KEY into the browser payload.
+ * Server-only Stripe access. This project no longer uses the Stripe SDK at
+ * runtime — the backend is a transparent proxy that forwards raw HTTP to
+ * Stripe's REST API (see app/api/[...path]/route.ts). All this module does is
+ * hold the secret key and the API base, so the key never reaches the browser.
  *
- * Lazily constructed so that `next build` succeeds without a key present;
- * the error surfaces on first request instead of at module load.
+ * Importing this from a Client Component would bundle STRIPE_SECRET_KEY into
+ * browser JS — don't. Only the catch-all route imports it.
+ *
+ * (The `stripe` npm package is still installed, but for its TypeScript types
+ * only — `import type Stripe from "stripe"` in the pages. No runtime import.)
  */
-let client: Stripe | null = null;
+export const STRIPE_API_BASE = "https://api.stripe.com";
 
-export function stripe(): Stripe {
-  if (client) return client;
-
+export function stripeKey(): string {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) {
     throw new Error(
       "STRIPE_SECRET_KEY is not set. Copy .env.local.example to .env.local and add your Stripe test key.",
     );
   }
-
-  client = new Stripe(key);
-  return client;
+  return key;
 }

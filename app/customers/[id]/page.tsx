@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 import type Stripe from "stripe";
-import { api } from "@/lib/client";
+import { stripe, type StripeList } from "@/lib/client";
 import { formatAmount, formatDate, periodEnd } from "@/lib/format";
 import {
   Button,
@@ -39,8 +39,8 @@ export default function CustomerPage({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .get<Stripe.Customer>(`/api/customers/${id}`)
+    stripe
+      .get<Stripe.Customer>(`/v1/customers/${id}`)
       .then((c) => {
         setCustomer(c);
         setForm({
@@ -54,9 +54,12 @@ export default function CustomerPage({
 
     // Subscriptions are a side-panel concern: a failure here shouldn't blank out
     // the customer record itself.
-    api
-      .get<Stripe.Subscription[]>(`/api/subscriptions?customer=${id}`)
-      .then(setSubs)
+    stripe
+      .get<StripeList<Stripe.Subscription>>("/v1/subscriptions", {
+        customer: id,
+        status: "all",
+      })
+      .then((res) => setSubs(res.data))
       .catch(() => setSubs([]));
   }, [id]);
 
@@ -69,7 +72,9 @@ export default function CustomerPage({
     setBusy(true);
     setError(null);
     try {
-      setCustomer(await api.patch<Stripe.Customer>(`/api/customers/${id}`, form));
+      setCustomer(
+        await stripe.post<Stripe.Customer>(`/v1/customers/${id}`, form),
+      );
       setEditing(false);
     } catch (err) {
       setError((err as Error).message);
@@ -82,9 +87,13 @@ export default function CustomerPage({
     setPortalBusy(true);
     setError(null);
     try {
-      const { url } = await api.post<{ url: string }>("/api/portal", {
-        customer: id,
-      });
+      const { url } = await stripe.post<{ url: string }>(
+        "/v1/billing_portal/sessions",
+        {
+          customer: id,
+          return_url: `${window.location.origin}/customers/${id}`,
+        },
+      );
       // Leaves our origin for Stripe's, so a full-page nav — router.push can't.
       window.location.href = url;
     } catch (err) {
@@ -109,7 +118,7 @@ export default function CustomerPage({
     setBusy(true);
     setError(null);
     try {
-      await api.del(`/api/customers/${id}`);
+      await stripe.del(`/v1/customers/${id}`);
       router.push("/customers");
     } catch (err) {
       setError((err as Error).message);

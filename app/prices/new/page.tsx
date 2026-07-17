@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 import type Stripe from "stripe";
-import { api } from "@/lib/client";
+import { stripe, type StripeList } from "@/lib/client";
 import { minorPerUnit, toMinorUnits } from "@/lib/format";
 import {
   Button,
@@ -39,10 +39,10 @@ export default function NewPricePage({
   });
 
   useEffect(() => {
-    api
-      .get<Stripe.Product[]>("/api/products")
-      .then((all) => {
-        const active = all.filter((p) => p.active);
+    stripe
+      .get<StripeList<Stripe.Product>>("/v1/products", { limit: 100 })
+      .then((res) => {
+        const active = res.data.filter((p) => p.active);
         setProducts(active);
         setForm((f) =>
           f.product || active.length === 0 ? f : { ...f, product: active[0].id },
@@ -60,13 +60,20 @@ export default function NewPricePage({
     setSaving(true);
     setError(null);
     try {
-      const created = await api.post<Stripe.Price>("/api/prices", {
+      // Stripe-native shape: a recurring price nests `recurring[interval]`; a
+      // one-time price simply omits `recurring`. This is exactly the request
+      // the server used to assemble — now the page builds it, so it's visible.
+      const params: Record<string, unknown> = {
         product: form.product,
         currency: form.currency,
         unit_amount: toMinorUnits(form.amount, form.currency),
-        interval: form.interval,
         nickname: form.nickname,
-      });
+      };
+      if (form.interval !== "one_time") {
+        params.recurring = { interval: form.interval };
+      }
+
+      const created = await stripe.post<Stripe.Price>("/v1/prices", params);
       router.push(`/prices/${created.id}`);
     } catch (err) {
       setError((err as Error).message);

@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { use, useEffect, useState } from "react";
 import type Stripe from "stripe";
-import { api } from "@/lib/client";
+import { stripe, type StripeList } from "@/lib/client";
 import { formatAmount, formatDate } from "@/lib/format";
 import {
   Badge,
@@ -36,17 +36,17 @@ export default function ProductPage({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .get<Stripe.Product>(`/api/products/${id}`)
+    stripe
+      .get<Stripe.Product>(`/v1/products/${id}`)
       .then((p) => {
         setProduct(p);
         setForm({ name: p.name ?? "", description: p.description ?? "" });
       })
       .catch((e: Error) => setError(e.message));
 
-    api
-      .get<Stripe.Price[]>(`/api/prices?product=${id}`)
-      .then(setPrices)
+    stripe
+      .get<StripeList<Stripe.Price>>("/v1/prices", { product: id })
+      .then((res) => setPrices(res.data))
       .catch(() => setPrices([]));
   }, [id]);
 
@@ -58,7 +58,9 @@ export default function ProductPage({
     setBusy(true);
     setError(null);
     try {
-      setProduct(await api.patch<Stripe.Product>(`/api/products/${id}`, form));
+      setProduct(
+        await stripe.post<Stripe.Product>(`/v1/products/${id}`, form),
+      );
       setEditing(false);
     } catch (err) {
       setError((err as Error).message);
@@ -73,7 +75,7 @@ export default function ProductPage({
     setError(null);
     try {
       setProduct(
-        await api.patch<Stripe.Product>(`/api/products/${id}`, {
+        await stripe.post<Stripe.Product>(`/v1/products/${id}`, {
           active: !product.active,
         }),
       );
@@ -89,7 +91,7 @@ export default function ProductPage({
     setBusy(true);
     setError(null);
     try {
-      await api.del(`/api/products/${id}`);
+      await stripe.del(`/v1/products/${id}`);
       router.push("/products");
     } catch (err) {
       // Stripe refuses a hard delete once any price references the product.

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import type Stripe from "stripe";
-import { api } from "@/lib/client";
+import { stripe } from "@/lib/client";
 import { formatAmount, formatDate, toMajorUnits } from "@/lib/format";
 import {
   Badge,
@@ -33,8 +33,8 @@ export default function PricePage({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .get<Stripe.Price>(`/api/prices/${id}`)
+    stripe
+      .get<Stripe.Price>(`/v1/prices/${id}`, { expand: ["product"] })
       .then((p) => {
         setPrice(p);
         setNickname(p.nickname ?? "");
@@ -47,7 +47,9 @@ export default function PricePage({
     setBusy(true);
     setError(null);
     try {
-      setPrice(await api.patch<Stripe.Price>(`/api/prices/${id}`, { nickname }));
+      setPrice(
+        await stripe.post<Stripe.Price>(`/v1/prices/${id}`, { nickname }),
+      );
       setEditing(false);
     } catch (err) {
       setError((err as Error).message);
@@ -62,7 +64,7 @@ export default function PricePage({
     setError(null);
     try {
       setPrice(
-        await api.patch<Stripe.Price>(`/api/prices/${id}`, {
+        await stripe.post<Stripe.Price>(`/v1/prices/${id}`, {
           active: !price.active,
         }),
       );

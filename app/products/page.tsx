@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type Stripe from "stripe";
-import { api } from "@/lib/client";
+import { stripe, type StripeList } from "@/lib/client";
 import { formatDate } from "@/lib/format";
 import {
   Badge,
@@ -20,9 +20,9 @@ export default function ProductsPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .get<Stripe.Product[]>("/api/products")
-      .then(setProducts)
+    stripe
+      .get<StripeList<Stripe.Product>>("/v1/products", { limit: 100 })
+      .then((res) => setProducts(res.data))
       .catch((e: Error) => setError(e.message));
   }, []);
 

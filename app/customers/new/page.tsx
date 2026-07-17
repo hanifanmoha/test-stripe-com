@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import type Stripe from "stripe";
-import { api } from "@/lib/client";
+import { stripe } from "@/lib/client";
 import {
   Button,
   ErrorBox,
@@ -32,7 +32,7 @@ export default function NewCustomerPage() {
     setSaving(true);
     setError(null);
     try {
-      const created = await api.post<Stripe.Customer>("/api/customers", form);
+      const created = await stripe.post<Stripe.Customer>("/v1/customers", form);
       router.push(`/customers/${created.id}`);
     } catch (err) {
       setError((err as Error).message);

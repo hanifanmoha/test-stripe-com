@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import type Stripe from "stripe";
-import { api } from "@/lib/client";
+import { stripe } from "@/lib/client";
 import { formatAmount, formatDate, periodEnd } from "@/lib/format";
 import {
   Button,
@@ -29,8 +29,10 @@ export default function SubscriptionPage({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .get<Stripe.Subscription>(`/api/subscriptions/${id}`)
+    stripe
+      .get<Stripe.Subscription>(`/v1/subscriptions/${id}`, {
+        expand: ["customer", "items.data.price.product"],
+      })
       .then(setSub)
       .catch((e: Error) => setError(e.message));
   }, [id]);
@@ -41,7 +43,7 @@ export default function SubscriptionPage({
     setError(null);
     try {
       setSub(
-        await api.patch<Stripe.Subscription>(`/api/subscriptions/${id}`, {
+        await stripe.post<Stripe.Subscription>(`/v1/subscriptions/${id}`, {
           cancel_at_period_end: !sub.cancel_at_period_end,
         }),
       );
@@ -62,7 +64,9 @@ export default function SubscriptionPage({
     setBusy(true);
     setError(null);
     try {
-      setSub(await api.del<Stripe.Subscription>(`/api/subscriptions/${id}`));
+      // Stripe cancels a subscription via DELETE /v1/subscriptions/{id} — the
+      // object survives with status "canceled", it isn't destroyed.
+      setSub(await stripe.del<Stripe.Subscription>(`/v1/subscriptions/${id}`));
     } catch (err) {
       setError((err as Error).message);
     } finally {

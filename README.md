@@ -2,7 +2,7 @@
 
 A deliberately minimal CRM for exploring how **Stripe subscriptions** are assembled. Next.js provides the frontend and the backend; Stripe provides the data. There is **no database** — Stripe is the datastore.
 
-The browser never talks to Stripe. It calls this app's `/api/*` routes, which hold the secret key and forward the request. That keeps `STRIPE_SECRET_KEY` server-side.
+The browser never talks to Stripe directly. It calls this app's `/api/v1/*` endpoints, which are a single **transparent proxy** ([`app/api/[...path]/route.ts`](app/api/[...path]/route.ts)): it attaches the secret key and forwards the request to `https://api.stripe.com/v1/*` unchanged, returning Stripe's raw response. That keeps `STRIPE_SECRET_KEY` server-side while making every call 1:1 with Stripe's own API — so what you see in the Network tab is exactly what you'd send Stripe with curl. The paths mirror Stripe (`/api/v1/customers` → `/v1/customers`), and the browser speaks Stripe's native form-encoded format ([`lib/client.ts`](lib/client.ts)).
 
 ## Setup
 
@@ -56,7 +56,7 @@ Neither deletes anything: the subscription persists with status `canceled`.
 
 The **Manage billing** button on a customer's detail page opens Stripe's hosted Customer Portal, where the customer can see their subscriptions and invoices, update payment methods, and cancel — none of which you have to build.
 
-It's **per customer, not per subscription**: one session exposes everything that customer has. (You can deep-link into a single subscription's cancel screen via `flow_data`, which `/api/portal` supports, but no button uses it yet.)
+It's **per customer, not per subscription**: one session exposes everything that customer has. (You can deep-link into a single subscription's cancel screen via `flow_data`, but no button uses it yet.)
 
 Same architecture as Checkout: the session is created server-side and the browser is redirected. No Stripe SDK in the browser.
 

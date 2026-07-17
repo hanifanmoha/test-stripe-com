@@ -4,11 +4,11 @@ How a subscription actually gets paid for, what the options are, and which one t
 
 ## What this project implements
 
-**Stripe-hosted Checkout** — `ui_mode: hosted_page`, which is the default. We create a Checkout Session server-side, hand the browser its `url`, and let it navigate to `checkout.stripe.com`. Stripe collects the card, creates the subscription, and redirects back.
+**Stripe-hosted Checkout** — `ui_mode: hosted_page`, which is the default. A Checkout Session is created, the browser takes its `url` and navigates to `checkout.stripe.com`, and Stripe collects the card, creates the subscription, and redirects back.
 
 Chosen because it's the only flow that needs **no Stripe SDK in the browser and no publishable key**, which keeps every Stripe call behind the server proxy — the point of this project.
 
-Files: [`app/api/checkout/route.ts`](app/api/checkout/route.ts) creates the session, [`app/subscriptions/new/page.tsx`](app/subscriptions/new/page.tsx) redirects to it.
+The session is created by the client POSTing `/v1/checkout/sessions` through the transparent proxy ([`app/subscriptions/new/page.tsx`](app/subscriptions/new/page.tsx) → [`app/api/[...path]/route.ts`](app/api/[...path]/route.ts)). The backend adds the secret key and forwards; it doesn't build the request. So the full session params — `mode`, `line_items`, `success_url` with the `{CHECKOUT_SESSION_ID}` placeholder — are assembled in the page and visible in the Network tab.
 
 ## The options
 
@@ -78,16 +78,16 @@ The secret key (`sk_test_…`) never leaves the server in any of these. The publ
 ## The implemented flow, step by step
 
 1. **`/subscriptions/new`** — pick a customer and a recurring price. The list is filtered to `price.recurring && price.active`, because `mode: 'subscription'` rejects one-time prices.
-2. **`POST /api/checkout`** — the server creates the session. The secret key is used here and only here.
+2. **Client POSTs `/api/v1/checkout/sessions`** (form-encoded) → proxy adds the key and forwards to Stripe. The secret key is attached here and only here.
 3. Response carries `url` (a `checkout.stripe.com` address) and `status: 'open'`.
 4. **`window.location.href = url`** — a full-page navigation, not `router.push`; the client router can't leave the origin.
 5. Customer pays on Stripe's domain. Test card `4242 4242 4242 4242`, any future expiry, any CVC — see [all test cards](https://docs.stripe.com/testing?testing-method=card-numbers#cards).
 6. **Stripe creates the subscription**, then redirects to `success_url` (or `cancel_url` if abandoned).
-7. `/subscriptions?checkout=success` shows a banner and re-lists.
+7. `/subscriptions?checkout=success&session_id=…` — the page retrieves the session via the proxy and shows a verified receipt (see below).
 
 ### The raw HTTP
 
-The SDK call in `app/api/checkout/route.ts` is just this:
+Because the backend is a transparent proxy, `POST /api/v1/checkout/sessions` is byte-for-byte this call to Stripe (the client form-encodes it; the proxy just adds `Authorization`):
 
 ```bash
 curl https://api.stripe.com/v1/checkout/sessions \
@@ -100,7 +100,7 @@ curl https://api.stripe.com/v1/checkout/sessions \
   --data-urlencode "cancel_url=http://localhost:3000/subscriptions?checkout=cancelled"
 ```
 
-`--data-urlencode` on the URLs is mandatory: with a plain `-d`, curl reads the `&` before `session_id` as a field separator and Stripe rejects the call with *"Received unknown parameter: session_id"*.
+`--data-urlencode` on the URLs is mandatory: with a plain `-d`, curl reads the `&` before `session_id` as a field separator and Stripe rejects the call with *"Received unknown parameter: session_id"*. The client-side `encode()` in `lib/client.ts` does the equivalent escaping.
 
 ## The gap: no webhook
 
@@ -110,4 +110,4 @@ So `success_url` is a UI convenience, not an event. Anything that must happen on
 
 ## Related, but not checkout
 
-The **Customer Portal** ([`app/api/portal/route.ts`](app/api/portal/route.ts)) is the same redirect pattern — server creates a session, browser navigates to Stripe — but it *manages* existing billing rather than starting it: view subscriptions and invoices, update payment methods, self-serve cancel. It's scoped per customer, not per subscription. See [README.md](README.md).
+The **Customer Portal** (client POSTs `/api/v1/billing_portal/sessions` through the proxy) is the same redirect pattern — create a session, browser navigates to Stripe — but it *manages* existing billing rather than starting it: view subscriptions and invoices, update payment methods, self-serve cancel. It's scoped per customer, not per subscription. See [README.md](README.md).

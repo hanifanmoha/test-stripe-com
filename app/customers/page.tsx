@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type Stripe from "stripe";
-import { api } from "@/lib/client";
+import { stripe, type StripeList } from "@/lib/client";
 import { formatDate } from "@/lib/format";
 import {
   ErrorBox,
@@ -19,9 +19,9 @@ export default function CustomersPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .get<Stripe.Customer[]>("/api/customers")
-      .then(setCustomers)
+    stripe
+      .get<StripeList<Stripe.Customer>>("/v1/customers", { limit: 100 })
+      .then((res) => setCustomers(res.data))
       .catch((e: Error) => setError(e.message));
   }, []);
 

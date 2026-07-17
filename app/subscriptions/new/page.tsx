@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import type Stripe from "stripe";
-import { api } from "@/lib/client";
+import { stripe, type StripeList } from "@/lib/client";
 import { formatAmount } from "@/lib/format";
 import {
   Button,
@@ -31,20 +31,20 @@ export default function NewSubscriptionPage({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .get<Stripe.Customer[]>("/api/customers")
-      .then((all) => {
-        setCustomers(all);
-        setCustomer((c) => c || all[0]?.id || "");
+    stripe
+      .get<StripeList<Stripe.Customer>>("/v1/customers", { limit: 100 })
+      .then((res) => {
+        setCustomers(res.data);
+        setCustomer((c) => c || res.data[0]?.id || "");
       })
       .catch((e: Error) => setError(e.message));
 
-    api
-      .get<Stripe.Price[]>("/api/prices")
-      .then((all) => {
+    stripe
+      .get<StripeList<Stripe.Price>>("/v1/prices", { limit: 100 })
+      .then((res) => {
         // Checkout's `subscription` mode only accepts recurring prices, and an
         // archived price can't be subscribed to at all.
-        const usable = all.filter((p) => p.recurring && p.active);
+        const usable = res.data.filter((p) => p.recurring && p.active);
         setPrices(usable);
         setPrice((p) => p || usable[0]?.id || "");
       })
@@ -56,13 +56,25 @@ export default function NewSubscriptionPage({
     setRedirecting(true);
     setError(null);
     try {
-      const { url } = await api.post<{ url: string }>("/api/checkout", {
-        customer,
-        price,
-      });
+      // The full Checkout Session request, Stripe-native. Previously the server
+      // assembled line_items and the return URLs; now the page does, so exactly
+      // what Stripe receives is visible here. {CHECKOUT_SESSION_ID} is a literal
+      // placeholder Stripe fills in on redirect — the encoder escapes the braces
+      // on the wire and Stripe stores them decoded.
+      const origin = window.location.origin;
+      const session = await stripe.post<Stripe.Checkout.Session>(
+        "/v1/checkout/sessions",
+        {
+          mode: "subscription",
+          customer,
+          line_items: [{ price, quantity: 1 }],
+          success_url: `${origin}/subscriptions?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${origin}/subscriptions?checkout=cancelled`,
+        },
+      );
       // A full-page navigation, not router.push — this leaves our origin for
       // Stripe's domain, which the client router can't do.
-      window.location.href = url;
+      window.location.href = session.url!;
     } catch (err) {
       setError((err as Error).message);
       setRedirecting(false);

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import type Stripe from "stripe";
-import { api } from "@/lib/client";
+import { stripe, type StripeList } from "@/lib/client";
 import { formatAmount, formatDate, periodEnd } from "@/lib/format";
 import {
   ErrorBox,
@@ -33,8 +33,10 @@ function CheckoutReceipt({ sessionId }: { sessionId: string }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .get<Stripe.Checkout.Session>(`/api/checkout/${sessionId}`)
+    stripe
+      .get<Stripe.Checkout.Session>(`/v1/checkout/sessions/${sessionId}`, {
+        expand: ["subscription", "customer"],
+      })
       .then(setSession)
       .catch((e: Error) => setError(e.message));
   }, [sessionId]);
@@ -153,9 +155,13 @@ export default function SubscriptionsPage({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .get<Stripe.Subscription[]>("/api/subscriptions")
-      .then(setSubs)
+    stripe
+      .get<StripeList<Stripe.Subscription>>("/v1/subscriptions", {
+        limit: 100,
+        status: "all",
+        expand: ["data.customer"],
+      })
+      .then((res) => setSubs(res.data))
       .catch((e: Error) => setError(e.message));
   }, []);
 
