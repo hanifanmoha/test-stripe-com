@@ -5,6 +5,7 @@ import { use, useEffect, useState } from "react";
 import type Stripe from "stripe";
 import { stripe, type StripeList } from "@/lib/client";
 import { formatAmount } from "@/lib/format";
+import { formatRate, inclusivity } from "@/lib/tax";
 import {
   Button,
   ErrorBox,
@@ -25,8 +26,13 @@ export default function NewSubscriptionPage({
 
   const [customers, setCustomers] = useState<Stripe.Customer[] | null>(null);
   const [prices, setPrices] = useState<Stripe.Price[] | null>(null);
+  const [taxRates, setTaxRates] = useState<Stripe.TaxRate[]>([]);
   const [customer, setCustomer] = useState(presetCustomer ?? "");
   const [price, setPrice] = useState("");
+  const [taxRate, setTaxRate] = useState(""); // "" = no tax
+  // Where the selected rate is attached: true → subscription_data.default_tax_rates
+  // (every renewal invoice); false → line_items[0].tax_rates (first invoice only).
+  const [taxAsDefault, setTaxAsDefault] = useState(true);
   const [redirecting, setRedirecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +55,12 @@ export default function NewSubscriptionPage({
         setPrice((p) => p || usable[0]?.id || "");
       })
       .catch((e: Error) => setError(e.message));
+
+    // Tax is optional — a failure here shouldn't block creating a subscription.
+    stripe
+      .get<StripeList<Stripe.TaxRate>>("/v1/tax_rates", { limit: 100 })
+      .then((res) => setTaxRates(res.data.filter((r) => r.active)))
+      .catch(() => setTaxRates([]));
   }, []);
 
   async function startCheckout(e: React.FormEvent) {
@@ -62,15 +74,27 @@ export default function NewSubscriptionPage({
       // placeholder Stripe fills in on redirect — the encoder escapes the braces
       // on the wire and Stripe stores them decoded.
       const origin = window.location.origin;
+
+      // A tax rate is optional. When chosen, the checkbox decides where it lands:
+      //  - default_tax_rates → applies to every recurring invoice
+      //  - line_items[].tax_rates → applies to the first (checkout) invoice only
+      const lineItem: Record<string, unknown> = { price, quantity: 1 };
+      const params: Record<string, unknown> = {
+        mode: "subscription",
+        customer,
+        success_url: `${origin}/subscriptions?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${origin}/subscriptions?checkout=cancelled`,
+      };
+      if (taxRate && taxAsDefault) {
+        params.subscription_data = { default_tax_rates: [taxRate] };
+      } else if (taxRate) {
+        lineItem.tax_rates = [taxRate];
+      }
+      params.line_items = [lineItem];
+
       const session = await stripe.post<Stripe.Checkout.Session>(
         "/v1/checkout/sessions",
-        {
-          mode: "subscription",
-          customer,
-          line_items: [{ price, quantity: 1 }],
-          success_url: `${origin}/subscriptions?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${origin}/subscriptions?checkout=cancelled`,
-        },
+        params,
       );
       // A full-page navigation, not router.push — this leaves our origin for
       // Stripe's domain, which the client router can't do.
@@ -139,6 +163,52 @@ export default function NewSubscriptionPage({
             ))}
           </Select>
         </Field>
+
+        <Field
+          label="Tax rate"
+          hint={
+            taxRates.length === 0
+              ? "No active tax rates — add one in the Tax rates section to apply tax."
+              : "Optional. Leave as “No tax” to charge the bare price."
+          }
+        >
+          <Select
+            value={taxRate}
+            onChange={(e) => setTaxRate(e.target.value)}
+            disabled={taxRates.length === 0}
+          >
+            <option value="">No tax</option>
+            {taxRates.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.display_name} — {formatRate(r)} ({inclusivity(r)})
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        {taxRate ? (
+          <label className="flex items-start gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+            <input
+              type="checkbox"
+              checked={taxAsDefault}
+              onChange={(e) => setTaxAsDefault(e.target.checked)}
+              className="mt-0.5 h-4 w-4"
+            />
+            <span>
+              Apply to <strong>every renewal</strong> (
+              <code className="font-mono text-xs">
+                subscription_data.default_tax_rates
+              </code>
+              ).
+              <br />
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                Unchecked: apply only to the first checkout invoice (
+                <code className="font-mono">line_items[0].tax_rates</code>) —
+                renewals would then bill tax-free.
+              </span>
+            </span>
+          </label>
+        ) : null}
 
         <Notice>
           <strong>You&apos;ll be sent to Stripe to pay.</strong> The subscription

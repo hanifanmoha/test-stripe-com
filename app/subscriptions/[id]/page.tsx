@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
 import type Stripe from "stripe";
-import { stripe } from "@/lib/client";
+import { stripe, type StripeList } from "@/lib/client";
 import { formatAmount, formatDate, periodEnd } from "@/lib/format";
 import {
   Button,
@@ -15,7 +15,34 @@ import {
   Notice,
   PageHeader,
   StatusBadge,
+  Table,
 } from "@/components/ui";
+
+// Why an invoice exists, in plain words.
+const BILLING_REASON: Record<string, string> = {
+  subscription_create: "Initial",
+  subscription_cycle: "Renewal",
+  subscription_update: "Change",
+  subscription_threshold: "Usage threshold",
+};
+
+function InvoiceStatus({ status }: { status: string | null }) {
+  const color =
+    status === "paid"
+      ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300"
+      : status === "open"
+        ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+        : status === "void" || status === "uncollectible"
+          ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
+          : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${color}`}
+    >
+      {status ?? "—"}
+    </span>
+  );
+}
 
 export default function SubscriptionPage({
   params,
@@ -25,6 +52,7 @@ export default function SubscriptionPage({
   const { id } = use(params);
 
   const [sub, setSub] = useState<Stripe.Subscription | null>(null);
+  const [invoices, setInvoices] = useState<Stripe.Invoice[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,6 +63,16 @@ export default function SubscriptionPage({
       })
       .then(setSub)
       .catch((e: Error) => setError(e.message));
+
+    // One invoice per billing cycle (plus the initial one). A failure here is a
+    // side concern — it shouldn't blank the subscription record.
+    stripe
+      .get<StripeList<Stripe.Invoice>>("/v1/invoices", {
+        subscription: id,
+        limit: 100,
+      })
+      .then((res) => setInvoices(res.data))
+      .catch(() => setInvoices([]));
   }, [id]);
 
   async function togglePeriodEndCancel() {
@@ -192,6 +230,76 @@ export default function SubscriptionPage({
           },
         ]}
       />
+
+      <div className="mt-10">
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+            Invoices
+          </h2>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            One per billing cycle — Stripe generates a new invoice each period,
+            plus the first at checkout.
+          </p>
+        </div>
+
+        {!invoices ? (
+          <Loading />
+        ) : (
+          <Table
+            headers={["Number", "Reason", "Amount", "Status", "Date", "Document"]}
+            isEmpty={invoices.length === 0}
+            empty="No invoices yet."
+          >
+            {invoices.map((inv) => (
+              <tr
+                key={inv.id}
+                className="transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-900"
+              >
+                <td className="px-4 py-3">
+                  <Mono>{inv.number ?? inv.id}</Mono>
+                </td>
+                <td className="px-4 py-3">
+                  {inv.billing_reason
+                    ? (BILLING_REASON[inv.billing_reason] ?? inv.billing_reason)
+                    : "—"}
+                </td>
+                <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100">
+                  {formatAmount(inv.total, inv.currency)}
+                </td>
+                <td className="px-4 py-3">
+                  <InvoiceStatus status={inv.status} />
+                </td>
+                <td className="px-4 py-3">{formatDate(inv.created)}</td>
+                <td className="px-4 py-3">
+                  <div className="flex gap-3">
+                    {inv.hosted_invoice_url ? (
+                      <a
+                        href={inv.hosted_invoice_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-medium text-zinc-900 underline hover:text-zinc-600 dark:text-zinc-100 dark:hover:text-zinc-300"
+                      >
+                        View ↗
+                      </a>
+                    ) : null}
+                    {inv.invoice_pdf ? (
+                      <a
+                        href={inv.invoice_pdf}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-zinc-500 underline hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200"
+                      >
+                        PDF
+                      </a>
+                    ) : null}
+                    {!inv.hosted_invoice_url && !inv.invoice_pdf ? "—" : null}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </div>
 
       <p className="mt-6 text-xs text-zinc-500 dark:text-zinc-400">
         Canceling never deletes the subscription — Stripe keeps it as a record
