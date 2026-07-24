@@ -5,10 +5,12 @@ import { use, useEffect, useState } from "react";
 import type Stripe from "stripe";
 import { stripe, type StripeList } from "@/lib/client";
 import { formatAmount, formatDate, periodEnd } from "@/lib/format";
+import { billingReasonLabel } from "@/lib/invoice";
 import {
   Button,
   DetailList,
   ErrorBox,
+  InvoiceStatusBadge,
   LinkButton,
   Loading,
   Mono,
@@ -17,32 +19,6 @@ import {
   StatusBadge,
   Table,
 } from "@/components/ui";
-
-// Why an invoice exists, in plain words.
-const BILLING_REASON: Record<string, string> = {
-  subscription_create: "Initial",
-  subscription_cycle: "Renewal",
-  subscription_update: "Change",
-  subscription_threshold: "Usage threshold",
-};
-
-function InvoiceStatus({ status }: { status: string | null }) {
-  const color =
-    status === "paid"
-      ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300"
-      : status === "open"
-        ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-        : status === "void" || status === "uncollectible"
-          ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
-          : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${color}`}
-    >
-      {status ?? "—"}
-    </span>
-  );
-}
 
 export default function SubscriptionPage({
   params,
@@ -259,15 +235,13 @@ export default function SubscriptionPage({
                   <Mono>{inv.number ?? inv.id}</Mono>
                 </td>
                 <td className="px-4 py-3">
-                  {inv.billing_reason
-                    ? (BILLING_REASON[inv.billing_reason] ?? inv.billing_reason)
-                    : "—"}
+                  {billingReasonLabel(inv.billing_reason)}
                 </td>
                 <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100">
                   {formatAmount(inv.total, inv.currency)}
                 </td>
                 <td className="px-4 py-3">
-                  <InvoiceStatus status={inv.status} />
+                  <InvoiceStatusBadge status={inv.status} />
                 </td>
                 <td className="px-4 py-3">{formatDate(inv.created)}</td>
                 <td className="px-4 py-3">

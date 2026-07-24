@@ -9,6 +9,7 @@ const NAV = [
   { href: "/customers", label: "Customers", also: [] as string[] },
   { href: "/products", label: "Products", also: ["/prices"] },
   { href: "/subscriptions", label: "Subscriptions", also: [] as string[] },
+  { href: "/invoices", label: "Invoices", also: [] as string[] },
   { href: "/checkout-sessions", label: "Checkout sessions", also: [] as string[] },
   { href: "/tax-rates", label: "Tax rates", also: [] as string[] },
 ];

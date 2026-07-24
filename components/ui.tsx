@@ -182,6 +182,26 @@ export function StatusBadge({ status }: { status: string }) {
   );
 }
 
+// Invoice statuses have their own lifecycle (draft/open/paid/void/
+// uncollectible) — distinct from subscription statuses, so a distinct badge.
+export function InvoiceStatusBadge({ status }: { status: string | null }) {
+  const color =
+    status === "paid"
+      ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300"
+      : status === "open"
+        ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+        : status === "void" || status === "uncollectible"
+          ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
+          : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${color}`}
+    >
+      {status ?? "—"}
+    </span>
+  );
+}
+
 export function Mono({ children }: { children: ReactNode }) {
   return (
     <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
