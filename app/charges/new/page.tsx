@@ -4,6 +4,7 @@ import Link from "next/link";
 import { use } from "react";
 import { LinkButton, PageHeader } from "@/components/ui";
 import { CONFIRMATION_TOKEN_FLOW, ConfirmationTokenFlow } from "./confirmation-token-flow";
+import { HOSTED_CHECKOUT_FLOW, HostedCheckoutFlow } from "./hosted-checkout-flow";
 import { LegacyTokenFlow } from "./legacy-token-flow";
 import type { FlowProps } from "./shared";
 
@@ -27,6 +28,13 @@ const FLOWS: {
     description:
       "Payment Element → ConfirmationToken → the backend creates and confirms a PaymentIntent. 3D Secure runs in the browser only when the bank asks for it.",
     Component: ConfirmationTokenFlow,
+  },
+  {
+    id: HOSTED_CHECKOUT_FLOW,
+    label: "Hosted Checkout (option B)",
+    description:
+      "The backend creates a Checkout Session; the user pays on checkout.stripe.com, where Stripe runs 3D Secure and charges; the success page syncs the session. No webhook.",
+    Component: HostedCheckoutFlow,
   },
 ];
 
