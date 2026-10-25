@@ -12,6 +12,12 @@
  */
 export const STRIPE_API_BASE = "https://api.stripe.com";
 
+/**
+ * Sent as `Stripe-Version` on every proxied call, overriding the account
+ * default (2026-06-24 on this account). Pinned to the version 99-stripe uses.
+ */
+export const STRIPE_API_VERSION = "2025-02-24.acacia";
+
 export function stripeKey(): string {
   const key = process.env.STRIPE_SECRET_KEY;
   if (!key) {

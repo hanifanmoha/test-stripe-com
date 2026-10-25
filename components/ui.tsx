@@ -202,6 +202,37 @@ export function InvoiceStatusBadge({ status }: { status: string | null }) {
   );
 }
 
+// Charges are simpler than invoices: succeeded, pending, or failed.
+export function ChargeStatusBadge({ status }: { status: string }) {
+  const color =
+    status === "succeeded"
+      ? "bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300"
+      : status === "failed"
+        ? "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
+        : "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300";
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${color}`}
+    >
+      {status}
+    </span>
+  );
+}
+
+/** Collapsible raw JSON — the exact payload, for when the summary isn't enough. */
+export function JsonBlock({ label, value }: { label: string; value: unknown }) {
+  return (
+    <details className="mt-2 rounded-md border border-zinc-200 dark:border-zinc-800">
+      <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-zinc-600 dark:text-zinc-400">
+        {label}
+      </summary>
+      <pre className="max-h-96 overflow-auto border-t border-zinc-200 bg-zinc-50 px-3 py-2 font-mono text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    </details>
+  );
+}
+
 export function Mono({ children }: { children: ReactNode }) {
   return (
     <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">

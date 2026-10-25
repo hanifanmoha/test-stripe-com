@@ -1,5 +1,5 @@
 import type { NextRequest } from "next/server";
-import { STRIPE_API_BASE, stripeKey } from "@/lib/stripe";
+import { STRIPE_API_BASE, STRIPE_API_VERSION, stripeKey } from "@/lib/stripe";
 
 /**
  * Transparent Stripe proxy. Its ONLY job is to attach the secret key so it
@@ -9,8 +9,8 @@ import { STRIPE_API_BASE, stripeKey } from "@/lib/stripe";
  *   here     ->  https://api.stripe.com/v1/customers
  *
  * Everything is forwarded verbatim: HTTP method, the path after /api/, the
- * query string, and the request body with its Content-Type. We add exactly one
- * thing — `Authorization: Bearer sk_...` — and hand Stripe's response back
+ * query string, and the request body with its Content-Type. We add exactly two
+ * headers — `Authorization: Bearer sk_...` and `Stripe-Version` — and hand Stripe's response back
  * untouched, same status code, same JSON. So `/api/v1/...` and Stripe's
  * `/v1/...` are the same call, which makes it trivial to compare against
  * Stripe's docs or replay with curl.
@@ -41,7 +41,10 @@ async function forward(
   const { path } = await ctx.params;
   const target = `${STRIPE_API_BASE}/${path.join("/")}${request.nextUrl.search}`;
 
-  const headers: HeadersInit = { Authorization: `Bearer ${key}` };
+  const headers: HeadersInit = {
+    Authorization: `Bearer ${key}`,
+    "Stripe-Version": STRIPE_API_VERSION,
+  };
   const contentType = request.headers.get("content-type");
   if (contentType) headers["Content-Type"] = contentType;
 

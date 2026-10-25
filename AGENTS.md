@@ -67,8 +67,9 @@ App Router, TypeScript strict, no `src/` directory — `app/` sits at the repo r
 
 **The backend is a single transparent proxy — it does not use the Stripe SDK, and it does not reshape anything.** This is deliberate (see the "Transparent proxy" note below): the whole request/response is meant to be inspectable and 1:1 with Stripe's own API.
 
-- `app/api/[...path]/route.ts` is the **entire backend**: a catch-all that forwards any method/path/query/body from `/api/v1/...` to `https://api.stripe.com/v1/...`, adding only `Authorization: Bearer sk_...`, and returns Stripe's response verbatim (same status, same JSON). There are no per-resource route files.
-- `lib/stripe.ts` is server-only and now just holds the key + API base (no SDK client). Importing it from a Client Component would bundle the key into browser JS.
+- `app/api/[...path]/route.ts` is the **entire backend**: a catch-all that forwards any method/path/query/body from `/api/v1/...` to `https://api.stripe.com/v1/...`, adding only `Authorization: Bearer sk_...` and `Stripe-Version`, and returns Stripe's response verbatim (same status, same JSON). There are no per-resource route files.
+- `lib/stripe.ts` is server-only and now just holds the key, the API base and the pinned API version (no SDK client).
+- **API version is pinned to `2025-02-24.acacia`** (`STRIPE_API_VERSION` in `lib/stripe.ts`), the version 99-stripe uses. It overrides the account default (`2026-06-24`) on every proxied call. It does not change webhook payloads (those follow the endpoint's version) or Stripe-hosted pages. The installed `stripe` types describe the newest version, so a few fields exist in responses but not in the types (e.g. `invoice.subscription`, top-level `current_period_end`). Importing it from a Client Component would bundle the key into browser JS.
 - `lib/client.ts` is the browser side: `stripe.get/post/patch/del` speak Stripe's **native wire format** — paths like `/v1/customers`, form-encoded bodies with bracket syntax (`line_items[0][price]`), `expand[0]=` query params — and return Stripe's **raw** JSON. Lists come back as `{ object: "list", data: [...] }`, so pages read `.data` themselves.
 - The `stripe` npm package remains installed for its **TypeScript types only** (`import type Stripe`). No runtime SDK import anywhere.
 
@@ -100,9 +101,9 @@ Stripe is not a uniform CRUD backend, and the API surface is asymmetric. Verifie
 
 Stripe has **no** price-delete endpoint, so a `DELETE /api/v1/prices/{id}` forwarded through the proxy comes back `405` from Stripe itself — and the UI never offers a delete button for prices. Don't add one that aliases to an archive; it would teach a wrong model of Stripe. Same reasoning applies to subscriptions: cancel (`DELETE /v1/subscriptions/{id}`) is not delete — the object survives as `canceled`.
 
-### `current_period_end` is not on the Subscription
+### `current_period_end`: read it from the item
 
-Verified against the installed types **and against live API responses**: `Subscription` has **no** `current_period_end` field — it lives on **`SubscriptionItem`** (`sub.items.data[0].current_period_end`). A real subscription fetched from this account returns `current_period_end: null` at the top level while the item carries the actual timestamp. Older Stripe code and most LLM training data read `subscription.current_period_end`, which silently yields nothing rather than erroring — the symptom is a renewal date that renders as "—" forever and looks like a data problem. Use `periodEnd()` from `lib/format.ts` instead of reaching for it directly.
+From `2025-03-31.basil` on, `Subscription` has **no** `current_period_end` field — it lives on **`SubscriptionItem`** (`sub.items.data[0].current_period_end`). On the pinned `2025-02-24.acacia` both exist, but the item path works on every version, so keep using it. A subscription fetched on the account default returns `current_period_end: null` at the top level while the item carries the actual timestamp. Older Stripe code and most LLM training data read `subscription.current_period_end`, which silently yields nothing rather than erroring — the symptom is a renewal date that renders as "—" forever and looks like a data problem. Use `periodEnd()` from `lib/format.ts` instead of reaching for it directly.
 
 ### Checkout flow
 
@@ -113,6 +114,29 @@ The **client** builds the full session request and POSTs `/api/v1/checkout/sessi
 - Return URLs are derived from `window.location.origin`, so no base-URL env var is needed.
 - **The redirect back is not what creates the subscription** — Stripe's servers do, and the user may never return. The success page reads back `session_id` and retrieves the session (`/api/v1/checkout/sessions/{id}`) to show a verified receipt, but that's a fast path, not a substitute for a webhook. Anything that must happen on payment success belongs in a webhook. (No webhook handler exists yet.)
 - The subscriptions list sends `status=all`; Stripe otherwise omits canceled ones.
+
+### Charges (one-off card payments)
+
+`app/charges/` lists charges, shows one, and `app/charges/new` runs charge flows. Each flow is a tab (`FLOWS` in `app/charges/new/page.tsx`, one component per flow); add new flows there.
+
+The first flow, **SPA token flow** (`legacy-token-flow.tsx`), deliberately copies what 99-spa / 99-spa-v2 do today, legacy parts included:
+
+1. Browser: legacy `checkout.js` (`lib/checkout-js.ts`, what `react-stripe-checkout` wraps) opens Stripe's old modal with the **publishable key** (`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`) and returns a token `tok_…`. This is the one place the app uses a publishable key and a Stripe browser script. The script sends no `Stripe-Version`, so it runs on the account default.
+2. `POST /v1/customers/{id}` with `source=tok_…` (replaces the default card), or `POST /v1/customers` with `source`, `description`, `email`, `address[country]=SG`, `metadata[agent_number]` for a new customer. `expand[]=sources` because the card list is not returned by default since 2020-08-27.
+3. `POST /v1/charges` with `customer` (no `source`: the default card is charged), `amount` = final price + GST, `currency=SGD`, `description`, `statement_descriptor` (cut to 22), and `metadata` `product_id`, `gst_amount`, `gst_rate`, `source`, `source_ref_id`.
+
+The second flow, **Payment Element + ConfirmationToken** (`confirmation-token-flow.tsx`), is the replacement candidate that keeps the backend in charge of the payment ("finalize payments on the server"):
+
+1. Browser: `@stripe/stripe-js` **v6 (pinned to `acacia`, matching the proxy)** mounts a card-only Payment Element in deferred mode (`mode: "payment"`, `paymentMethodTypes: ["card"]`), then `elements.submit()` and `stripe.createConfirmationToken()` → `ctoken_…`.
+2. Optional: `GET /v1/confirmation_tokens/{id}` to inspect the card server-side.
+3. Customer: reused as-is, or created without a card.
+4. `POST /v1/payment_intents` with `confirm=true`, `confirmation_token`, `payment_method_types[]=card`, `statement_descriptor_suffix`, the same metadata, `expand[]=latest_charge`. `succeeded` → done in one call.
+5. `requires_action` → `stripe.handleNextAction({ clientSecret })` runs 3D Secure in the browser.
+6. `GET /v1/payment_intents/{id}` decides the outcome. A redirect-based next action returns to `/charges/new?flow=confirmation-token&payment_intent=pi_…`, which runs this check on load.
+
+Shared form fields, amount maths, metadata and the step cards live in `app/charges/new/shared.tsx`; every flow component takes `FlowProps` (the page's search params).
+
+The page shows every request and Stripe's raw response per step (`stripe.raw()` in `lib/client.ts`, which never throws). `lib/charge.ts` types the charge by hand because the installed types no longer document `charge.source`. New accounts block publishable-key tokenization: enable "Enable card data collection with a publishable key without using Stripe's pre-built UI elements" at dashboard.stripe.com/settings/integration. This flow cannot do 3D Secure.
 
 ### Customer Portal
 

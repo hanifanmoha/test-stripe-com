@@ -57,11 +57,14 @@ function encode(params: Params, prefix = ""): string {
 
 const enc = encodeURIComponent;
 
-async function send<T>(
+/** Stripe's answer as-is — status plus raw JSON, error or not. */
+export type RawResponse = { status: number; ok: boolean; body: unknown };
+
+async function request(
   path: string,
   method: string,
   params?: Params,
-): Promise<T> {
+): Promise<RawResponse> {
   const isBodyMethod = method !== "GET" && method !== "DELETE";
   const query = !isBodyMethod && params ? encode(params) : "";
 
@@ -75,17 +78,25 @@ async function send<T>(
       : {}),
   });
 
-  const payload = await res.json().catch(() => null);
+  return { status: res.status, ok: res.ok, body: await res.json().catch(() => null) };
+}
+
+async function send<T>(
+  path: string,
+  method: string,
+  params?: Params,
+): Promise<T> {
+  const res = await request(path, method, params);
 
   if (!res.ok) {
     // Stripe's real error shape is { error: { message, type, ... } }.
     const message =
-      (payload as { error?: { message?: string } } | null)?.error?.message ??
+      (res.body as { error?: { message?: string } } | null)?.error?.message ??
       `Request failed (${res.status})`;
     throw new Error(message);
   }
 
-  return payload as T;
+  return res.body as T;
 }
 
 export const stripe = {
@@ -98,4 +109,7 @@ export const stripe = {
    */
   post: <T>(path: string, params: Params) => send<T>(path, "POST", params),
   del: <T>(path: string) => send<T>(path, "DELETE"),
+  /** Never throws on a Stripe error — for flows that show every response. */
+  raw: (method: "GET" | "POST" | "DELETE", path: string, params?: Params) =>
+    request(path, method, params),
 };
