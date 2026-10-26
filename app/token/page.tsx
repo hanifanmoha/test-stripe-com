@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { loadStripe } from "@stripe/stripe-js";
 import { openLegacyCheckout } from "@/lib/checkout-js";
 import { cardLabel } from "@/lib/charge";
-import { toMinorUnits } from "@/lib/format";
+import { formatAmount, toMinorUnits } from "@/lib/format";
 import { useCardModal } from "@/components/card-modal";
 import {
   Button,
@@ -23,13 +24,15 @@ import {
  *
  *   tok_     legacy checkout.js modal, what 99-spa / 99-spa-v2 use today
  *   ctoken_  Payment Element popup + createConfirmationToken, the replacement
+ *   3DS      for a PaymentIntent that came back requires_action: Stripe.js
+ *            handleNextAction with its client secret opens the bank's popup
  *
  * Both are made with a publishable key only. A token belongs to the account
  * of that key, so the secret key used afterwards must be from the same
  * account, or Stripe answers "No such token".
  */
 
-type Kind = "tok" | "ctoken";
+type Kind = "tok" | "ctoken" | "3ds";
 type CaptureMethod = "automatic" | "manual";
 
 type Result = {
@@ -41,6 +44,7 @@ type Result = {
 
 const ENV_KEY = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "";
 const KEY_PATTERN = /^pk_(test|live)_[A-Za-z0-9]{20,}$/;
+const CLIENT_SECRET_PATTERN = /^(pi_[A-Za-z0-9]+)_secret_[A-Za-z0-9]+$/;
 // Same as STRIPE_API_VERSION in lib/stripe.ts, which is server-only.
 const API_VERSION = "2025-02-24.acacia";
 const CURRENCIES = ["sgd", "usd", "idr", "myr"];
@@ -48,6 +52,7 @@ const CURRENCIES = ["sgd", "usd", "idr", "myr"];
 export default function TokenPage() {
   const [kind, setKind] = useState<Kind>("tok");
   const [keyOverride, setKeyOverride] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
   const [form, setForm] = useState({
     amount: "10.00",
     currency: "sgd",
@@ -121,6 +126,31 @@ export default function TokenPage() {
     });
   }
 
+  async function authenticate() {
+    const stripeJs = await loadStripe(publishableKey);
+    if (!stripeJs) {
+      setError("Couldn't load Stripe.js.");
+      return;
+    }
+    const { error: actionError, paymentIntent } = await stripeJs.handleNextAction({ clientSecret });
+    if (actionError) setError(`${actionError.code ?? actionError.type}: ${actionError.message ?? ""}`);
+    const pi = paymentIntent ?? actionError?.payment_intent;
+    if (!pi) return;
+    setResult({
+      kind: "3ds",
+      id: pi.id,
+      summary: [
+        { label: "Status (as Stripe.js sees it)", value: pi.status },
+        { label: "Amount", value: formatAmount(pi.amount, pi.currency) },
+        { label: "Capture method", value: pi.capture_method },
+        ...(pi.last_payment_error
+          ? [{ label: "Last error", value: `${pi.last_payment_error.code ?? pi.last_payment_error.type}: ${pi.last_payment_error.message ?? ""}` }]
+          : []),
+      ],
+      body: pi,
+    });
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -129,13 +159,17 @@ export default function TokenPage() {
       setError("Publishable key must look like pk_test_… or pk_live_….");
       return;
     }
-    if (amountMinor <= 0) {
+    if (kind === "3ds" && !CLIENT_SECRET_PATTERN.test(clientSecret)) {
+      setError("Client secret must look like pi_…_secret_….");
+      return;
+    }
+    if (kind !== "3ds" && amountMinor <= 0) {
       setError("Amount must be above zero.");
       return;
     }
     setRunning(true);
     try {
-      await (kind === "tok" ? createLegacyToken() : createConfirmationToken());
+      await (kind === "tok" ? createLegacyToken() : kind === "ctoken" ? createConfirmationToken() : authenticate());
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -164,6 +198,7 @@ export default function TokenPage() {
           >
             <option value="tok">tok_ (checkout.js modal, current SPA)</option>
             <option value="ctoken">ctoken_ (Payment Element, ConfirmationToken)</option>
+            <option value="3ds">3D Secure for a PaymentIntent (client secret)</option>
           </Select>
         </Field>
 
@@ -179,56 +214,74 @@ export default function TokenPage() {
           />
         </Field>
 
-        <div className="grid grid-cols-2 gap-4">
+        {kind === "3ds" ? (
           <Field
-            label="Amount"
-            hint={kind === "tok" ? "Display only. The token has no amount." : "Display only. Set the real amount on the PaymentIntent."}
+            label="Client secret"
+            hint="client_secret from the PaymentIntent that came back requires_action. Same account as the publishable key."
           >
-            <Input value={form.amount} onChange={set("amount")} inputMode="decimal" />
+            <Input
+              value={clientSecret}
+              onChange={(e) => setClientSecret(e.target.value.trim())}
+              placeholder="pi_…_secret_…"
+              spellCheck={false}
+            />
           </Field>
-          <Field label="Currency" hint={kind === "ctoken" ? "Must match the PaymentIntent." : "Display only."}>
-            <Select value={form.currency} onChange={set("currency")}>
-              {CURRENCIES.map((c) => (
-                <option key={c} value={c}>
-                  {c.toUpperCase()}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Popup title" hint="Display only.">
-            <Input value={form.name} onChange={set("name")} />
-          </Field>
-          <Field label="Popup description" hint="Display only.">
-            <Input value={form.description} onChange={set("description")} />
-          </Field>
-        </div>
-
-        {kind === "tok" ? (
-          <>
-            <Field label="Email" hint="Prefills the modal. Left empty, the modal asks for it; it ends up on the token.">
-              <Input type="email" value={form.email} onChange={set("email")} placeholder="agent@example.com" />
-            </Field>
-            <Notice>
-              New accounts block this modal: enable &quot;Enable card data collection with a
-              publishable key without using Stripe&apos;s pre-built UI elements&quot; at{" "}
-              <Mono>dashboard.stripe.com/settings/integration</Mono>.
-            </Notice>
-          </>
         ) : (
-          <Field label="Capture method" hint="manual = ADR option A (hold, capture later). The PaymentIntent must use the same.">
-            <Select value={form.captureMethod} onChange={set("captureMethod")}>
-              <option value="automatic">automatic</option>
-              <option value="manual">manual</option>
-            </Select>
-          </Field>
+          <>
+          <div className="grid grid-cols-2 gap-4">
+            <Field
+              label="Amount"
+              hint={kind === "tok" ? "Display only. The token has no amount." : "Display only. Set the real amount on the PaymentIntent."}
+            >
+              <Input value={form.amount} onChange={set("amount")} inputMode="decimal" />
+            </Field>
+            <Field label="Currency" hint={kind === "ctoken" ? "Must match the PaymentIntent." : "Display only."}>
+              <Select value={form.currency} onChange={set("currency")}>
+                {CURRENCIES.map((c) => (
+                  <option key={c} value={c}>
+                    {c.toUpperCase()}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Popup title" hint="Display only.">
+              <Input value={form.name} onChange={set("name")} />
+            </Field>
+            <Field label="Popup description" hint="Display only.">
+              <Input value={form.description} onChange={set("description")} />
+            </Field>
+          </div>
+
+          {kind === "tok" ? (
+            <>
+              <Field label="Email" hint="Prefills the modal. Left empty, the modal asks for it; it ends up on the token.">
+                <Input type="email" value={form.email} onChange={set("email")} placeholder="agent@example.com" />
+              </Field>
+              <Notice>
+                New accounts block this modal: enable &quot;Enable card data collection with a
+                publishable key without using Stripe&apos;s pre-built UI elements&quot; at{" "}
+                <Mono>dashboard.stripe.com/settings/integration</Mono>.
+              </Notice>
+            </>
+          ) : (
+            <Field label="Capture method" hint="manual = ADR option A (hold, capture later). The PaymentIntent must use the same.">
+              <Select value={form.captureMethod} onChange={set("captureMethod")}>
+                <option value="automatic">automatic</option>
+                <option value="manual">manual</option>
+              </Select>
+            </Field>
+          )}
+          </>
         )}
 
         <div className="flex gap-2">
           <Button type="submit" disabled={running}>
-            {running ? "Waiting for the popup…" : kind === "tok" ? "Open checkout.js" : "Open Payment Element"}
+            {running
+              ? "Waiting for the popup…"
+              : { tok: "Open checkout.js", ctoken: "Open Payment Element", "3ds": "Open 3D Secure" }[kind]}
           </Button>
         </div>
       </form>
@@ -265,27 +318,46 @@ function TokenResult({
   captureMethod: CaptureMethod;
 }) {
   const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const params =
+  const status = (result.body as { status?: string }).status;
+  const calls: { label: string; method: "GET" | "POST"; path: string; lines: string[] }[] =
     result.kind === "tok"
-      ? { path: "/v1/charges", lines: [`amount=${amountMinor}`, `currency=${currency}`, `source=${result.id}`] }
-      : {
-          path: "/v1/payment_intents",
-          lines: [
-            `amount=${amountMinor}`,
-            `currency=${currency}`,
-            "payment_method_types[]=card",
-            `confirmation_token=${result.id}`,
-            "confirm=true",
-            ...(captureMethod === "manual" ? ["capture_method=manual"] : []),
-          ],
-        };
-  const data = params.lines.map((l) => `  -d "${l}"`).join(" \\\n");
-  const direct = `curl https://api.stripe.com${params.path} \\\n  -u "$STRIPE_SECRET_KEY:" \\\n  -H "Stripe-Version: ${API_VERSION}" \\\n${data}`;
-  const proxied = `curl ${origin}/api${params.path} \\\n${data}`;
+      ? [{ label: "Charge it", method: "POST", path: "/v1/charges", lines: [`amount=${amountMinor}`, `currency=${currency}`, `source=${result.id}`] }]
+      : result.kind === "ctoken"
+        ? [
+            {
+              label: "Create and confirm a PaymentIntent",
+              method: "POST",
+              path: "/v1/payment_intents",
+              lines: [
+                `amount=${amountMinor}`,
+                `currency=${currency}`,
+                "payment_method_types[]=card",
+                `confirmation_token=${result.id}`,
+                "confirm=true",
+                ...(captureMethod === "manual" ? ["capture_method=manual"] : []),
+              ],
+            },
+          ]
+        : [
+            { label: "Check it with the secret key", method: "GET", path: `/v1/payment_intents/${result.id}`, lines: ["expand[]=latest_charge"] },
+            ...(status === "requires_capture"
+              ? [{ label: "Capture the hold", method: "POST" as const, path: `/v1/payment_intents/${result.id}/capture`, lines: [] }]
+              : []),
+          ];
+  const curl = (call: (typeof calls)[number], direct: boolean) => {
+    const head = direct
+      ? [`curl https://api.stripe.com${call.path}`, `  -u "$STRIPE_SECRET_KEY:"`, `  -H "Stripe-Version: ${API_VERSION}"`]
+      : [`curl ${origin}/api${call.path}`];
+    const get = call.method === "GET" && call.lines.length ? ["  -G"] : [];
+    const post = call.method === "POST" && !call.lines.length ? ["  -X POST"] : [];
+    return [...head, ...get, ...post, ...call.lines.map((l) => `  -d "${l}"`)].join(" \\\n");
+  };
 
   return (
     <div className="mt-8 flex max-w-3xl flex-col gap-4">
-      <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Token</h2>
+      <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+        {result.kind === "3ds" ? "PaymentIntent" : "Token"}
+      </h2>
 
       <div className="rounded-lg border border-zinc-200 px-4 py-3 dark:border-zinc-800">
         <div className="flex items-center justify-between gap-4">
@@ -300,7 +372,7 @@ function TokenResult({
             </div>
           ))}
         </dl>
-        <JsonBlock label="Raw token" value={result.body} />
+        <JsonBlock label={result.kind === "3ds" ? "Raw PaymentIntent" : "Raw token"} value={result.body} />
       </div>
 
       <p className="text-sm text-zinc-600 dark:text-zinc-400">
@@ -309,6 +381,13 @@ function TokenResult({
             Single use. Charge it directly as below, or attach it with{" "}
             <Mono>POST /v1/customers/{"{id}"} source={result.id}</Mono> and charge the
             customer, which is what 99-stripe does today.
+          </>
+        ) : result.kind === "3ds" ? (
+          <>
+            The status above is what the browser saw. Decide from the secret-key read
+            below: <Mono>succeeded</Mono> is paid, <Mono>requires_capture</Mono> is a
+            hold (option A), <Mono>requires_payment_method</Mono> means authentication
+            failed or the card was declined.
           </>
         ) : (
           <>
@@ -319,8 +398,15 @@ function TokenResult({
         )}
       </p>
 
-      <CodeBlock label="Stripe directly" text={direct} />
-      <CodeBlock label="Through this app's proxy (adds the secret key and version)" text={proxied} />
+      {calls.map((call) => (
+        <div key={call.path} className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            {call.label}: <Mono>{call.method} {call.path}</Mono>
+          </h3>
+          <CodeBlock label="Stripe directly" text={curl(call, true)} />
+          <CodeBlock label="Through this app's proxy (adds the secret key and version)" text={curl(call, false)} />
+        </div>
+      ))}
     </div>
   );
 }
