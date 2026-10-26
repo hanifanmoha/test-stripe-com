@@ -127,7 +127,7 @@ The first flow, **SPA token flow** (`legacy-token-flow.tsx`), deliberately copie
 
 The second flow, **Payment Element + ConfirmationToken** (`confirmation-token-flow.tsx`), is the replacement candidate that keeps the backend in charge of the payment ("finalize payments on the server"):
 
-1. Browser: `@stripe/stripe-js` **v6 (pinned to `acacia`, matching the proxy)** mounts a card-only Payment Element in deferred mode (`mode: "payment"`, `paymentMethodTypes: ["card"]`), then `elements.submit()` and `stripe.createConfirmationToken()` → `ctoken_…`.
+1. Browser: `@stripe/stripe-js` **v6 (pinned to `acacia`, matching the proxy)** opens a popup (`useCardModal()` in `components/card-modal.tsx`) with a card-only Payment Element in deferred mode (`mode: "payment"`, `paymentMethodTypes: ["card"]`), then `elements.submit()` and `stripe.createConfirmationToken()` → `ctoken_…`. The popup behaves like the checkout.js modal: card errors stay inside it, and closing it returns null.
 2. Optional: `GET /v1/confirmation_tokens/{id}` to inspect the card server-side.
 3. Customer: reused as-is, or created without a card.
 4. `POST /v1/payment_intents` with `confirm=true`, `confirmation_token`, `payment_method_types[]=card`, `statement_descriptor_suffix`, the same metadata, `expand[]=latest_charge`. `succeeded` → done in one call.
@@ -139,6 +139,10 @@ The third flow, **Hosted Checkout (option B)** (`hosted-checkout-flow.tsx`), is 
 Shared form fields, amount maths, metadata and the step cards live in `app/charges/new/shared.tsx`; every flow component takes `FlowProps` (the page's search params).
 
 The page shows every request and Stripe's raw response per step (`stripe.raw()` in `lib/client.ts`, which never throws). `lib/charge.ts` types the charge by hand because the installed types no longer document `charge.source`. New accounts block publishable-key tokenization: enable "Enable card data collection with a publishable key without using Stripe's pre-built UI elements" at dashboard.stripe.com/settings/integration. This flow cannot do 3D Secure.
+
+### Token
+
+`app/token/page.tsx` makes a card token and stops, so it can be used in a hand-written API call. It does not call the proxy. `tok_` comes from the checkout.js modal (`lib/checkout-js.ts`); `ctoken_` comes from the same Payment Element popup as the charge flow (`components/card-modal.tsx`). The publishable key field starts empty and is an override: empty uses `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, which is never shown on the page; the token belongs to that key's account, so the secret key used afterwards must be from the same account. The result shows the token, its raw JSON, and curl commands for `POST /v1/charges` (`tok_`) or `POST /v1/payment_intents` with `confirm=true` (`ctoken_`), both against Stripe and through the proxy. The Payment Element's `currency` and `captureMethod` must match the PaymentIntent; its amount is display only.
 
 ### Customer Portal
 

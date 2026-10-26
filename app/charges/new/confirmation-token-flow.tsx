@@ -1,19 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type Stripe from "stripe";
-import {
-  loadStripe,
-  type ConfirmationToken,
-  type Stripe as StripeJs,
-  type StripeElements,
-  type StripePaymentElement,
-} from "@stripe/stripe-js";
 import { stripe, type RawResponse } from "@/lib/client";
 import { cardLabel, type Charge } from "@/lib/charge";
 import { formatAmount } from "@/lib/format";
 import { Button, ErrorBox, Mono, Notice } from "@/components/ui";
+import { useCardModal } from "@/components/card-modal";
 import {
   DEFAULT_PURCHASE,
   MIN_AMOUNT,
@@ -63,7 +57,7 @@ function chargeIdOf(pi: PaymentIntent): string | null {
  * The card is collected by Stripe's Payment Element and handed to the backend
  * as a ConfirmationToken; the backend still triggers the payment:
  *
- *   1. browser   Payment Element → stripe.createConfirmationToken → ctoken_…
+ *   1. browser   Payment Element popup → stripe.createConfirmationToken → ctoken_…
  *   2. backend   (optional) read the ConfirmationToken to check the card first
  *   3. backend   find or create the customer — no card is saved on it
  *   4. backend   POST /v1/payment_intents confirm=true confirmation_token=ctoken_…
@@ -80,54 +74,16 @@ export function ConfirmationTokenFlow({ searchParams }: FlowProps) {
   const [purchase, setPurchase] = useState<Purchase>(DEFAULT_PURCHASE);
   const [steps, setSteps] = useState<Step[]>([]);
   const [running, setRunning] = useState(false);
-  const [ready, setReady] = useState(false);
   const [chargeId, setChargeId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const mountRef = useRef<HTMLDivElement>(null);
-  const stripeJsRef = useRef<StripeJs | null>(null);
-  const elementsRef = useRef<StripeElements | null>(null);
+  const cardModal = useCardModal();
 
   const selected = customers?.find((c) => c.id === purchase.customer) ?? null;
   const { gstMinor, totalMinor, descriptorSuffix } = amounts(purchase);
   const returnedPaymentIntent = searchParams.payment_intent;
 
   const push = (step: Step) => setSteps((s) => [...s, step]);
-
-  // Stripe.js (Acacia, from @stripe/stripe-js v6) + a card-only Payment Element.
-  // Deferred mode: no PaymentIntent exists until the backend creates one.
-  useEffect(() => {
-    if (!PUBLISHABLE_KEY) return;
-    let cancelled = false;
-    let element: StripePaymentElement | null = null;
-
-    loadStripe(PUBLISHABLE_KEY)
-      .then((stripeJs) => {
-        if (cancelled || !stripeJs || !mountRef.current) return;
-        const elements = stripeJs.elements({
-          mode: "payment",
-          amount: amounts(DEFAULT_PURCHASE).totalMinor,
-          currency: "sgd",
-          paymentMethodTypes: ["card"],
-        });
-        element = elements.create("payment");
-        element.on("ready", () => setReady(true));
-        element.mount(mountRef.current);
-        stripeJsRef.current = stripeJs;
-        elementsRef.current = elements;
-      })
-      .catch((e: Error) => setError(`Couldn't load Stripe.js: ${e.message}`));
-
-    return () => {
-      cancelled = true;
-      element?.destroy();
-    };
-  }, []);
-
-  // The element shows the amount for wallets; keep it in sync with the form.
-  useEffect(() => {
-    elementsRef.current?.update({ amount: Math.max(totalMinor, MIN_AMOUNT) });
-  }, [totalMinor]);
 
   // A redirect-based next action comes back here with ?payment_intent=pi_…
   useEffect(() => {
@@ -151,10 +107,6 @@ export function ConfirmationTokenFlow({ searchParams }: FlowProps) {
 
   async function pay(e: React.FormEvent) {
     e.preventDefault();
-    const stripeJs = stripeJsRef.current;
-    const elements = elementsRef.current;
-    if (!stripeJs || !elements) return;
-
     setSteps([]);
     setChargeId(null);
     setError(null);
@@ -167,29 +119,30 @@ export function ConfirmationTokenFlow({ searchParams }: FlowProps) {
     const sourceRefId = purchase.sourceRefId || `txn_${Date.now()}`;
 
     try {
-      // 1. Validate the form, then turn what was typed into a ConfirmationToken.
-      //    return_url travels inside the token; Stripe only uses it if a next
-      //    action has to leave the page.
-      const { error: submitError } = await elements.submit();
-      if (submitError) {
-        setError(submitError.message ?? "Card details incomplete.");
-        return;
-      }
+      // 1. The popup collects the card and returns a ConfirmationToken, like
+      //    checkout.js returns a token. Stripe.js is @stripe/stripe-js v6
+      //    (Acacia). return_url travels inside the token; Stripe only uses it
+      //    if a next action has to leave the page.
       const returnUrl = `${window.location.origin}/charges/new?flow=${CONFIRMATION_TOKEN_FLOW}`;
-      const { error: tokenError, confirmationToken } = await stripeJs.createConfirmationToken({
-        elements,
-        params: { return_url: returnUrl },
-      });
       const tokenStep = {
         title: "1. Create the ConfirmationToken",
-        prod: "Browser: Payment Element → stripe.createConfirmationToken (publishable key)",
+        prod: "Browser: Payment Element popup → stripe.createConfirmationToken (publishable key)",
         request: { method: "Stripe.js", path: "createConfirmationToken()", params: { return_url: returnUrl } },
       };
-      if (tokenError || !confirmationToken) {
-        push({ ...tokenStep, error: tokenError?.message ?? "No ConfirmationToken returned." });
+      const popup = await cardModal.open({
+        publishableKey: PUBLISHABLE_KEY,
+        name: "99.co",
+        description: `Payment for ${purchase.title || "package"}`,
+        amount: totalMinor,
+        currency: "sgd",
+        returnUrl,
+      });
+      if (!popup) {
+        push({ ...tokenStep, error: "Popup closed without a card. Nothing was sent to the backend." });
         return;
       }
-      const preview = (confirmationToken as ConfirmationToken).payment_method_preview;
+      const { stripe: stripeJs, confirmationToken } = popup;
+      const preview = confirmationToken.payment_method_preview;
       push({
         ...tokenStep,
         response: { status: 200, ok: true, body: confirmationToken },
@@ -345,20 +298,14 @@ export function ConfirmationTokenFlow({ searchParams }: FlowProps) {
           descriptorHint={`Sent as statement_descriptor_suffix: "${descriptorSuffix}". The card statement reads "<account prefix>* ${descriptorSuffix}".`}
         />
 
-        <div>
-          <span className="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">Card</span>
-          <div ref={mountRef} className="rounded-md border border-zinc-300 p-3 dark:border-zinc-700" />
-          {!ready && PUBLISHABLE_KEY ? (
-            <span className="mt-1.5 block text-xs text-zinc-500 dark:text-zinc-400">Loading Payment Element…</span>
-          ) : null}
-        </div>
-
         <div className="flex gap-2">
-          <Button type="submit" disabled={running || !ready}>
+          <Button type="submit" disabled={running || !PUBLISHABLE_KEY}>
             {running ? "Processing…" : "Pay"}
           </Button>
         </div>
       </form>
+
+      {cardModal.modal}
 
       <Steps steps={steps}>
         {chargeId ? (

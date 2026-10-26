@@ -11,6 +11,7 @@ const NAV = [
   { href: "/subscriptions", label: "Subscriptions", also: [] as string[] },
   { href: "/invoices", label: "Invoices", also: [] as string[] },
   { href: "/charges", label: "Charges", also: [] as string[] },
+  { href: "/token", label: "Token", also: [] as string[] },
   { href: "/checkout-sessions", label: "Checkout sessions", also: [] as string[] },
   { href: "/tax-rates", label: "Tax rates", also: [] as string[] },
 ];
