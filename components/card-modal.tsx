@@ -87,7 +87,9 @@ function CardModal({
           paymentMethodTypes: ["card"],
           captureMethod: options.captureMethod ?? "automatic",
         });
-        element = elements.create("payment");
+        element = elements.create("payment", {
+          defaultValues: { billingDetails: { address: { country: "SG" } } },
+        });
         element.on("ready", () => setReady(true));
         element.on("loaderror", (e) => setError(e.error.message ?? e.error.type));
         element.mount(mountRef.current);
